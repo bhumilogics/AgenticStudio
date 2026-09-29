@@ -103,6 +103,25 @@ class Settings:
         default_factory=lambda: _env("AGENTICSTUDIO_REFLECTOR_BACKEND", "heuristic")
     )
 
+    # --- Run health ---
+    # A Job Run executes synchronously in a background thread for the whole
+    # life of the HTTP request that started it (POST /jobs/{id}/run). If the
+    # server process dies or restarts mid-run (e.g. `uvicorn --reload`
+    # picking up a file change), that thread is gone but the run's DB row is
+    # left at status="running" forever -- nothing ever calls update_run() to
+    # close it out. Two safety nets key off this setting:
+    #   1. On startup, any row still "running" is *guaranteed* orphaned (this
+    #      is a fresh process; nothing is running it) and is auto-marked
+    #      "error" immediately -- see core.job_store.mark_orphaned_runs_as_error().
+    #   2. A "running" row that hasn't been touched (core.job_store.update_run,
+    #      called on every agent hop) in longer than this many seconds is
+    #      flagged `stale` by get_run()/list_runs() without the server
+    #      auto-failing it -- it might genuinely still be working -- and the
+    #      UI offers a manual "Mark as failed" action instead.
+    stale_run_seconds: int = field(
+        default_factory=lambda: int(_env("AGENTICSTUDIO_STALE_RUN_SECONDS", "900"))
+    )
+
     # --- Claude Code CLI backend (core/backends/claude_code.py) ---
     claude_code_binary: str = field(default_factory=lambda: _env("AGENTICSTUDIO_CLAUDE_CODE_BIN", "claude"))
     claude_code_model: str | None = field(default_factory=lambda: _env("AGENTICSTUDIO_CLAUDE_CODE_MODEL", None))

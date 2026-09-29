@@ -1,34 +1,27 @@
-"""System prompts for the planner and reflector nodes."""
+"""
+Agent prompts are no longer hardcoded here.
 
-PLANNER_SYSTEM_PROMPT = """You are the planning-and-acting core of AgenticStudio, \
-a general-purpose autonomous agent.
+Every role's instructions now live as a Markdown file under agents/,
+parsed by core/agent_loader.py into an AgentDefinition:
 
-You have access to a set of tools. Given the user's task and the \
-conversation so far:
+    agents/planner.md    -- the default single-agent planner (was
+                             PLANNER_SYSTEM_PROMPT)
+    agents/reflector.md  -- the tool-failure classifier (was
+                             REFLECTOR_SYSTEM_PROMPT)
+    agents/qa_manager.md, agents/qa_lead.md,
+    agents/qa_automation_engineer.md, agents/qa_test_executor.md
+                         -- the example multi-agent QA team
 
-1. If you don't yet have a plan, produce a short numbered plan (2-6 steps) \
-before doing anything else, and state it plainly.
-2. Work through the plan by calling tools as needed, one meaningful action \
-at a time -- don't call five tools at once "just in case."
-3. If a tool result changes what you should do next, revise the plan and \
-say so briefly.
-4. When the task is fully complete, respond with a final answer that does \
-NOT call any tool, starting with "FINAL ANSWER:" followed by the result \
-the user actually needs (not a narration of your steps).
-5. If you get stuck (repeated tool failures, missing information only the \
-user can supply, or you're not sure whether to proceed with something \
-risky), say so plainly instead of guessing.
+To read or edit a role's prompt: edit its .md file directly, or write it
+through the natural-language pipeline (core/nl_to_md.py) once that lands.
+Nothing in core/graph.py imports from this module anymore -- it's kept only
+as a pointer for anyone still looking here out of habit.
 
-Be concise. Do not repeat the full plan on every turn -- only when it \
-changes."""
+This file is reserved, going forward, for prompts that genuinely belong to
+*code* rather than to any one agent role -- e.g. a future supervisor's
+routing prompt (core/supervisor.py) or the natural-language-to-.md writer's
+own meta-prompt (core/nl_to_md.py) -- since those aren't agent personas
+themselves, just orchestration/tooling logic.
+"""
 
-REFLECTOR_SYSTEM_PROMPT = """You are the reflector for an autonomous agent. \
-You are shown the most recent tool call and its result. Decide ONE of:
-
-- "continue"  -- the result is fine, let the planner take the next step
-- "retry"     -- the tool call failed or returned an error; the planner \
-should try again (a different approach, not the identical call)
-- "escalate"  -- this has failed repeatedly or something looks unsafe/ \
-irreversible enough that a human should look at it
-
-Respond with exactly one word: continue, retry, or escalate."""
+from __future__ import annotations

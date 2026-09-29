@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgenticStudio</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">AgenticStudio</div>
+      <nav>
+        <a href="#/jobs" data-nav="jobs">Jobs</a>
+        <a href="#/logs" data-nav="logs">Log Explorer</a>
+        <a href="#/schedules" data-nav="schedules">Scheduler</a>
+        <a href="#/agents" data-nav="agents">Agents</a>
+      </nav>
+      <div id="user-badge" class="user-badge"></div>
+      <div class="api-config">
+        <label>API base URL</label>
+        <input id="api-base-input" type="text" placeholder="http://localhost:8000" />
+        <button id="api-base-save">Save</button>
+        <div id="api-status" class="api-status">checking...</div>
+      </div>
+    </aside>
+    <main id="main"></main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

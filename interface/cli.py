@@ -6,6 +6,8 @@ Typer CLI.
     python -m interface.cli resume <thread_id> deny "too risky"
     python -m interface.cli tools list
     python -m interface.cli tools list --category search_web
+    python -m interface.cli agents list
+    python -m interface.cli agents show qa_lead
 """
 
 from __future__ import annotations
@@ -23,7 +25,9 @@ from observability.logging_config import get_logger
 
 app = typer.Typer(help="AgenticStudio — autonomous general-purpose agent framework")
 tools_app = typer.Typer(help="Inspect the tools/ registry")
+agents_app = typer.Typer(help="Inspect the agents/ registry (.md role definitions)")
 app.add_typer(tools_app, name="tools")
+app.add_typer(agents_app, name="agents")
 
 console = Console()
 logger = get_logger("agenticstudio.cli")
@@ -38,18 +42,22 @@ def _startup():
 def run(
     task: str = typer.Argument(..., help="The task to give the agent"),
     thread_id: str = typer.Option(None, help="Resume/continue a specific thread instead of starting a new one"),
+    agent: str = typer.Option("planner", help="Which agents/<name>.md role to run this task as"),
 ):
     """Run a task to completion (or until it pauses for human approval)."""
-    from langchain_core.messages import HumanMessage, SystemMessage
-    from core.prompts import PLANNER_SYSTEM_PROMPT
+    from langchain_core.messages import HumanMessage
+    from core.agent_loader import load_agent
     from core.state import initial_state
 
     thread_id = thread_id or str(uuid.uuid4())
     console.print(f"[bold cyan]thread:[/bold cyan] {thread_id}")
 
-    graph = build_graph()
+    agent_def = load_agent(agent)
+    graph = build_graph(agent_def=agent_def)
     state = initial_state(task, settings.max_iterations, settings.max_tool_retries)
-    state["messages"] = [SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=task)]
+    # No SystemMessage here -- the planner node prepends agent_def.instructions
+    # when none is present yet.
+    state["messages"] = [HumanMessage(content=task)]
     config = {"configurable": {"thread_id": thread_id}}
 
     final_state = _stream_to_console(graph, state, config, thread_id)
@@ -97,6 +105,35 @@ def tools_list(category: str = typer.Option(None, help="Only show this category"
         table.add_row(getattr(t, "name", "?"), (getattr(t, "description", "") or "")[:100])
     console.print(table)
     console.print(f"[dim]categories: {', '.join(list_categories())}[/dim]")
+
+
+@agents_app.command("list")
+def agents_list():
+    """List every agent role available under agents/*.md."""
+    from core.agent_loader import list_agents, load_agent, AgentLoadError
+
+    table = Table(title="Agent roles (agents/*.md)")
+    table.add_column("name")
+    table.add_column("display name")
+    table.add_column("reports_to")
+    table.add_column("hands_off_to")
+    for name in list_agents():
+        try:
+            a = load_agent(name)
+            table.add_row(a.name, a.display_name, a.reports_to or "-", a.hands_off_to or "-")
+        except AgentLoadError as e:
+            table.add_row(name, "[red]invalid[/red]", "-", str(e)[:60])
+    console.print(table)
+
+
+@agents_app.command("show")
+def agents_show(name: str = typer.Argument(..., help="Agent name, e.g. qa_lead")):
+    """Print one agent's full parsed definition."""
+    from core.agent_loader import load_agent
+
+    a = load_agent(name)
+    console.print(a.model_dump())
+    console.print("\n[bold]Instructions[/bold]\n" + a.instructions)
 
 
 def _stream_to_console(graph, input_, config, thread_id):

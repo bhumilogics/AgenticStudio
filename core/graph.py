@@ -19,6 +19,14 @@ The LangGraph orchestration core.
 This is intentionally a plain StateGraph rather than `create_react_agent`,
 so the retry/escalate/approval policy is visible and editable here rather
 than hidden inside a prebuilt helper.
+
+Agent behavior (system prompt, tool set, autonomy, risky-tool list) is no
+longer hardcoded here -- it comes from an AgentDefinition (core/agent_loader.py),
+parsed from a Markdown file under agents/. build_graph() defaults to the
+"planner" / "reflector" agents (agents/planner.md, agents/reflector.md) so
+single-agent callers (main.py, the CLI, the API's existing /tasks route)
+keep working unchanged; a multi-agent Job (core/supervisor.py, later) passes
+its own agent_def per role instead.
 """
 
 from __future__ import annotations
@@ -30,10 +38,10 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.types import Command, interrupt
 
+from .agent_loader import AgentDefinition, load_agent
 from .checkpointer import get_checkpointer
 from .config import settings
 from .llm import get_llm_with_tools
-from .prompts import PLANNER_SYSTEM_PROMPT, REFLECTOR_SYSTEM_PROMPT
 from .state import AgentState
 
 logger = logging.getLogger("agenticstudio.graph")
@@ -76,13 +84,14 @@ def _parse_reflection_decision(text: str) -> str:
     return "retry"
 
 
-def _llm_backed_reflection(tool_messages: list[ToolMessage]) -> str | None:
+def _llm_backed_reflection(tool_messages: list[ToolMessage], reflector_prompt: str) -> str | None:
     """
     Ask an LLM to classify the recent tool failure(s) as continue / retry /
     escalate, using whichever backend settings.reflector_backend names.
-    Returns None (caller falls back to the heuristic-only path) on any
-    backend failure -- a broken reflection backend should never take the
-    whole run down.
+    `reflector_prompt` is the reflector agent's instructions (agents/reflector.md
+    by default). Returns None (caller falls back to the heuristic-only path)
+    on any backend failure -- a broken reflection backend should never take
+    the whole run down.
     """
     backend = settings.reflector_backend
     if backend == "heuristic":
@@ -94,7 +103,7 @@ def _llm_backed_reflection(tool_messages: list[ToolMessage]) -> str | None:
         from .backends.claude_code import ClaudeCodeUnavailable, complete
 
         try:
-            result = complete(REFLECTOR_SYSTEM_PROMPT, prompt, timeout=settings.claude_code_timeout)
+            result = complete(reflector_prompt, prompt, timeout=settings.claude_code_timeout)
             return _parse_reflection_decision(result.text)
         except ClaudeCodeUnavailable as e:
             logger.warning("claude-code reflector backend unavailable (%s) -- falling back to heuristic", e)
@@ -107,7 +116,7 @@ def _llm_backed_reflection(tool_messages: list[ToolMessage]) -> str | None:
         from .llm import get_llm
 
         try:
-            response = get_llm().invoke([SystemMessage(content=REFLECTOR_SYSTEM_PROMPT), HumanMessage(content=prompt)])
+            response = get_llm().invoke([SystemMessage(content=reflector_prompt), HumanMessage(content=prompt)])
             content = response.content if isinstance(response.content, str) else str(response.content)
             return _parse_reflection_decision(content)
         except Exception as e:
@@ -118,30 +127,47 @@ def _llm_backed_reflection(tool_messages: list[ToolMessage]) -> str | None:
     return None
 
 
-def build_graph(tools: list | None = None, risky_tools: list[str] | None = None):
+def build_graph(
+    tools: list | None = None,
+    risky_tools: list[str] | None = None,
+    agent_def: AgentDefinition | None = None,
+    reflector_def: AgentDefinition | None = None,
+):
     """
-    Build and compile the agent graph.
+    Build and compile the agent graph for one role.
 
-    `tools` defaults to tools.get_all_tools() (everything currently
-    configured). `risky_tools` defaults to settings.risky_tools.
+    `agent_def` defaults to agents/planner.md (single-agent, backward
+    compatible with every existing caller). `reflector_def` defaults to
+    agents/reflector.md. A multi-agent Job builds one graph per role by
+    passing a different agent_def (e.g. load_agent("qa_lead")).
+
+    `tools` defaults to tools.get_all_tools(categories=agent_def.tools) --
+    an agent's `tools:` frontmatter list is its allowed tool categories.
+    `risky_tools` defaults to agent_def.resolved_risky_tools (which itself
+    falls back to settings.risky_tools when the agent doesn't override it).
     """
+    if agent_def is None:
+        agent_def = load_agent("planner")
+    if reflector_def is None:
+        reflector_def = load_agent("reflector")
+
     if tools is None:
         from tools import get_all_tools
 
-        tools = get_all_tools(categories=settings.tool_categories)
+        tools = get_all_tools(categories=agent_def.tools or settings.tool_categories)
 
-    risky_tools = set(risky_tools if risky_tools is not None else settings.risky_tools)
+    risky_tools = set(risky_tools if risky_tools is not None else agent_def.resolved_risky_tools)
 
-    llm_with_tools = get_llm_with_tools(tools)
+    llm_with_tools = get_llm_with_tools(tools, model=agent_def.model, backend=agent_def.resolved_llm_backend)
     tool_node = ToolNode(tools)
 
     # ---------------------------------------------------------------- planner
     def planner(state: AgentState) -> dict:
         messages = state["messages"]
         if not messages:
-            messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)]
+            messages = [SystemMessage(content=agent_def.instructions)]
         elif not any(isinstance(m, SystemMessage) for m in messages):
-            messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT), *messages]
+            messages = [SystemMessage(content=agent_def.instructions), *messages]
 
         # Fold a pending human response back in as plain context, if present.
         if state.get("human_response"):
@@ -180,7 +206,7 @@ def build_graph(tools: list | None = None, risky_tools: list[str] | None = None)
             return "give_up"
 
         pending = _pending_tool_calls(state)
-        needs_approval = settings.autonomy_level == "supervised" or any(
+        needs_approval = agent_def.resolved_autonomy == "supervised" or any(
             tc["name"] in risky_tools for tc in pending
         )
         return "human_approval" if needs_approval else "tool_executor"
@@ -228,7 +254,7 @@ def build_graph(tools: list | None = None, risky_tools: list[str] | None = None)
         # settings.reflector_backend) to classify it rather than always
         # just retrying. None (backend unset/unavailable/failed) keeps the
         # original heuristic-only behavior.
-        decision = _llm_backed_reflection(recent_tool_messages) or "retry"
+        decision = _llm_backed_reflection(recent_tool_messages, reflector_def.instructions) or "retry"
 
         if decision == "escalate" or errors_so_far > state["max_tool_retries"]:
             return {
@@ -269,18 +295,16 @@ def build_graph(tools: list | None = None, risky_tools: list[str] | None = None)
     return graph.compile(checkpointer=get_checkpointer())
 
 
-def run_task(task: str, thread_id: str, graph=None) -> dict:
+def run_task(task: str, thread_id: str, graph=None, agent_def: AgentDefinition | None = None) -> dict:
     """Synchronous convenience runner: invoke the graph to completion (or
     until it pauses on a human_approval interrupt) and return final state."""
     from .state import initial_state
 
-    graph = graph or build_graph()
+    agent_def = agent_def or load_agent("planner")
+    graph = graph or build_graph(agent_def=agent_def)
     config = {"configurable": {"thread_id": thread_id}}
     state = initial_state(task, settings.max_iterations, settings.max_tool_retries)
-    state["messages"] = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)]
-    from langchain_core.messages import HumanMessage
-
-    state["messages"].append(HumanMessage(content=task))
+    state["messages"] = [HumanMessage(content=task)]
 
     return graph.invoke(state, config=config)
 

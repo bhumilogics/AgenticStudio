@@ -15,7 +15,6 @@ import uuid
 
 from core.config import settings
 from core.graph import build_graph
-from core.prompts import PLANNER_SYSTEM_PROMPT
 from core.state import initial_state
 from observability import configure_logging, stream_and_trace
 
@@ -31,11 +30,13 @@ def main():
     thread_id = str(uuid.uuid4())
     print(f"thread_id: {thread_id}")
 
-    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.messages import HumanMessage
 
     graph = build_graph()
     state = initial_state(task, settings.max_iterations, settings.max_tool_retries)
-    state["messages"] = [SystemMessage(content=PLANNER_SYSTEM_PROMPT), HumanMessage(content=task)]
+    # No SystemMessage here -- the planner node prepends its agent's own
+    # instructions (agents/planner.md by default) when none is present yet.
+    state["messages"] = [HumanMessage(content=task)]
     config = {"configurable": {"thread_id": thread_id}}
 
     for update in stream_and_trace(graph, state, config):

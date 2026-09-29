@@ -121,7 +121,22 @@ _UNKNOWN_FLAG_MARKERS = ("unknown option", "unrecognized", "not recognized", "in
 
 def _run_claude(cmd: list[str], stdin_payload: str, timeout: int) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(cmd, input=stdin_payload, capture_output=True, text=True, timeout=timeout)
+        # encoding="utf-8" is NOT the default here despite text=True: without
+        # it, Python decodes the subprocess's stdout/stderr using
+        # locale.getpreferredencoding(), which on a default Windows install
+        # is the system codepage (cp1252), not UTF-8. The `claude` CLI's
+        # JSON output is UTF-8 and routinely contains bytes cp1252 has no
+        # mapping for (curly quotes, em dashes, emoji) -- those crash the
+        # background reader thread subprocess.run() uses internally, which
+        # then leaves proc.stdout as None instead of raising here, so the
+        # failure surfaces later as a confusing
+        # "AttributeError: 'NoneType' object has no attribute 'strip'".
+        # errors="replace" means a genuinely undecodable byte becomes U+FFFD
+        # instead of crashing the read outright.
+        return subprocess.run(
+            cmd, input=stdin_payload, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        )
     except FileNotFoundError as e:
         raise ClaudeCodeUnavailable(str(e)) from e
 
@@ -178,7 +193,7 @@ def complete(system_prompt: str, user_prompt: str, timeout: int | None = None) -
             except OSError:
                 pass
 
-    stdout = proc.stdout.strip()
+    stdout = (proc.stdout or "").strip()
     raw = None
     text = stdout
 
@@ -205,7 +220,7 @@ def complete(system_prompt: str, user_prompt: str, timeout: int | None = None) -
     )
 
     if proc.returncode != 0 and not text:
-        raise RuntimeError(f"claude CLI exited {proc.returncode}: {proc.stderr.strip()[:2000]}")
+        raise RuntimeError(f"claude CLI exited {proc.returncode}: {(proc.stderr or '').strip()[:2000]}")
 
     return ClaudeCodeResult(text=text, raw=raw, exit_code=proc.returncode)
 

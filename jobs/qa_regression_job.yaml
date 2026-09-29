@@ -1,0 +1,32 @@
+id: qa_regression_job
+name: "QA Regression Pass"
+description: "Run the QA team end to end on a regression scope: QA Manager scopes the strategy, QA Lead splits it into automatable vs. manual cases, then the Automation Engineer and Test Executor carry out their assigned cases."
+trigger_type: manual
+
+agents:
+  - qa_manager
+  - qa_lead
+  - qa_automation_engineer
+  - qa_test_executor
+
+tasks:
+  - id: strategy
+    agent: qa_manager
+    name: "Define test strategy"
+    instructions: "Turn the incoming task description into a scoped test strategy: what changed, priority areas, and what \"done\" means for this pass."
+    depends_on: [plan]
+  - id: plan
+    agent: qa_lead
+    name: "Build the test plan"
+    instructions: "Split the QA Manager's strategy into automatable and manual-only test cases, and assign each to the right role."
+    depends_on: [strategy]
+  - id: automate
+    agent: qa_automation_engineer
+    name: "Automate assigned cases"
+    instructions: "Write and run automated tests for every case the QA Lead marked automatable, and report pass/fail with evidence."
+    depends_on: [plan]
+  - id: execute
+    agent: qa_test_executor
+    name: "Execute manual cases"
+    instructions: "Carry out every case the QA Lead marked manual-only, and report the observed result for each."
+    depends_on: [plan]
