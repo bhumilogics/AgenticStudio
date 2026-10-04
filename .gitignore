@@ -4,4 +4,9 @@
 *.log
 __pycache__
 httpsyoutu.beXSwkW7atUOEsi=KEoS49UN.txt
-/BA/
+/BA
+/data
+/interface/__pycache__ 
+node_modules
+observability/__pycache__
+workdir
