@@ -1,0 +1,73 @@
+# AgenticStudio — tools/ folder dependencies
+# Install the core set first; add category extras as you enable them
+# (each tools/*.py module docstring lists exactly what it needs).
+
+# --- Core (LangGraph + LangChain + Anthropic) ---
+langgraph>=0.2.0
+langgraph-checkpoint-sqlite
+langchain>=0.3.0
+langchain-core
+langchain-community
+langchain-anthropic
+langchain-experimental
+
+# --- Search & Web (no-key tools; safe defaults) ---
+duckduckgo-search
+wikipedia
+arxiv
+xmltodict
+beautifulsoup4
+requests
+
+# --- Retrieval / long-term memory ---
+langchain-chroma
+chromadb
+langchain-huggingface
+sentence-transformers
+
+# --- Math / utility ---
+numexpr
+
+# --- Agent / Job definitions (agents/*.md, jobs/*.yaml -> core/agent_loader.py, core/job_loader.py) ---
+pyyaml
+
+# --- Interface (CLI / API / scheduler) ---
+typer
+rich
+fastapi
+uvicorn[standard]
+pydantic
+apscheduler
+python-dotenv
+
+# --- Observability ---
+structlog
+pandas
+streamlit
+
+# ---------------------------------------------------------------
+# Optional, enable per-tool by installing + setting the matching
+# env var (see each tools/*.py docstring for exact names):
+#
+#   tavily-python                      # TAVILY_API_KEY
+#   langchain-google-community         # Google Search / Gmail
+#   google-api-python-client
+#   google-auth-oauthlib
+#   wolframalpha                       # WOLFRAM_ALPHA_APPID
+#   slack_sdk                          # SLACK_USER_TOKEN
+#   pygithub                           # GITHUB_APP_ID
+#   python-gitlab                      # GITLAB_PERSONAL_ACCESS_TOKEN
+#   atlassian-python-api               # JIRA_*
+#   O365                               # O365_CLIENT_ID / SECRET
+#   boto3                              # AWS_LAMBDA
+#   amadeus                            # AMADEUS_*
+#   playwright                         # AGENTICSTUDIO_ENABLE_BROWSER=1
+#   selenium
+#   bearly-sdk                         # BEARLY_API_KEY
+#   e2b-code-interpreter                # E2B_API_KEY
+#   openai                             # DALL-E image generation
+#   azure-ai-formrecognizer            # Azure Cognitive Services
+#   azure-cognitiveservices-speech
+#   sqlalchemy                         # SQLDatabaseToolkit
+#   pandas                             # pandas dataframe query tool
+# ---------------------------------------------------------------
