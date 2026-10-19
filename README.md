@@ -8,7 +8,7 @@ This guide gives a browser-testing agent the application map, stable UI entry po
 - The frontend uses hash navigation: `#/jobs`, `#/jobs/<job-id>`, `#/jobs/run/<run-id>`, `#/agents`, `#/schedules`, and `#/logs`.
 - The API is a FastAPI app at `interface.api:app`, normally served at `http://localhost:8000`.
 - The frontend is normally served as static files from `frontend/` at `http://localhost:8080`.
-- The UI requires authentication. The first registered account on a fresh instance is an admin. Admin-only areas and operations include schedule management and editing/deleting Agent or Job definitions.
+- The UI requires authentication. The first registered account on a fresh instance is an admin. Admin-only areas and operations include user management, schedule management, and editing/deleting Agent or Job definitions.
 - Main UI workflows: register/sign in; browse and run Jobs; inspect a Job's workflow/tasks and run history; view Agent definitions; manage recurring schedules; filter run events in Log Explorer; resume approval-paused runs or mark stale runs failed.
 - LLM execution is external and potentially credentialed. Avoid invoking real Job runs in routine UI tests unless the test explicitly targets execution and supplies a deterministic backend.
 

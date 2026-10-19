@@ -357,7 +357,47 @@ def get_user_by_email(email: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def get_user_by_id(user_id: str) -> Optional[dict]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def list_users() -> list[dict]:
     with _connect() as conn:
         rows = conn.execute("SELECT id, email, role, created_at FROM users ORDER BY created_at").fetchall()
         return [dict(r) for r in rows]
+
+
+def update_user(user_id: str, email: str, role: str) -> bool:
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            return False
+        if row["role"] == "admin" and role != "admin":
+            admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0]
+            if admin_count <= 1:
+                raise ValueError("cannot demote the last admin")
+        conn.execute("UPDATE users SET email = ?, role = ? WHERE id = ?", (email, role, user_id))
+        return True
+
+
+def update_user_password(user_id: str, password_hash: str) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+        return cursor.rowcount > 0
+
+
+def delete_user(user_id: str) -> bool:
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row is None:
+            return False
+        if row["role"] == "admin":
+            admin_count = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()[0]
+            if admin_count <= 1:
+                raise ValueError("cannot delete the last admin")
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        return True

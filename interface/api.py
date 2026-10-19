@@ -68,8 +68,9 @@ Schedules (persisted; run against a Job on a cron):                             
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -135,7 +136,7 @@ class CurrentUser(BaseModel):
 
 async def get_current_user(authorization: Optional[str] = Header(default=None)) -> CurrentUser:
     from core.auth import AuthError, decode_token
-    from core.job_store import get_user_by_email
+    from core.job_store import get_user_by_id
 
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
@@ -145,8 +146,8 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
     except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    row = get_user_by_email(claims.get("email", ""))
-    if not row or row["id"] != claims.get("sub"):
+    row = get_user_by_id(claims.get("sub", ""))
+    if not row:
         raise HTTPException(status_code=401, detail="user no longer exists")
     return CurrentUser(id=row["id"], email=row["email"], role=row["role"])
 
@@ -164,6 +165,21 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: str
+    password: str
+
+
+class AdminCreateUserRequest(BaseModel):
+    email: str
+    password: str
+    role: Literal["end_user", "admin"] = "end_user"
+
+
+class AdminUpdateUserRequest(BaseModel):
+    email: Optional[str] = None
+    role: Optional[Literal["end_user", "admin"]] = None
+
+
+class AdminChangePasswordRequest(BaseModel):
     password: str
 
 
@@ -201,6 +217,82 @@ async def list_users_endpoint(_: CurrentUser = Depends(require_admin)):
     from core.job_store import list_users
 
     return {"users": list_users()}
+
+
+@app.post("/auth/users", status_code=201)
+async def create_user_endpoint(req: AdminCreateUserRequest, _: CurrentUser = Depends(require_admin)):
+    from core.auth import AuthError, register_user
+
+    email = req.email.strip()
+    if not email or not req.password:
+        raise HTTPException(status_code=422, detail="email and password are required")
+    try:
+        return await asyncio.to_thread(register_user, email, req.password, req.role)
+    except AuthError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="email is already registered")
+
+
+@app.patch("/auth/users/{user_id}")
+async def update_user_endpoint(
+    user_id: str,
+    req: AdminUpdateUserRequest,
+    _: CurrentUser = Depends(require_admin),
+):
+    from core.job_store import get_user_by_id, update_user
+
+    if req.email is None and req.role is None:
+        raise HTTPException(status_code=422, detail="provide an email or role to update")
+    existing = await asyncio.to_thread(get_user_by_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="user not found")
+    email = req.email.strip() if req.email is not None else existing["email"]
+    if not email:
+        raise HTTPException(status_code=422, detail="email is required")
+    role = req.role or existing["role"]
+    try:
+        updated = await asyncio.to_thread(update_user, user_id, email, role)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail="email is already registered")
+    if not updated:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"id": user_id, "email": email, "role": role}
+
+
+@app.put("/auth/users/{user_id}/password")
+async def change_user_password_endpoint(
+    user_id: str,
+    req: AdminChangePasswordRequest,
+    _: CurrentUser = Depends(require_admin),
+):
+    from core.auth import hash_password
+    from core.job_store import update_user_password
+
+    if not req.password:
+        raise HTTPException(status_code=422, detail="password is required")
+    password_hash = await asyncio.to_thread(hash_password, req.password)
+    updated = await asyncio.to_thread(update_user_password, user_id, password_hash)
+    if not updated:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"updated": user_id}
+
+
+@app.delete("/auth/users/{user_id}")
+async def delete_user_endpoint(user_id: str, user: CurrentUser = Depends(require_admin)):
+    from core.job_store import delete_user
+
+    if user_id == user.id:
+        raise HTTPException(status_code=409, detail="you cannot delete your own account")
+    try:
+        deleted = await asyncio.to_thread(delete_user, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"deleted": user_id}
 
 
 # --------------------------------------------------------------- lifecycle

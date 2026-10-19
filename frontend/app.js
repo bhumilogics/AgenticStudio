@@ -148,6 +148,8 @@ async function renderApp() {
 function renderUserBadge() {
   const el = document.getElementById("user-badge");
   if (!el) return;
+  const usersNav = document.getElementById("users-nav");
+  if (usersNav) usersNav.hidden = !isAdmin();
   el.innerHTML = "";
   if (!currentUser) return;
   el.appendChild(h("div", { class: "muted" }, currentUser.email));
@@ -184,6 +186,7 @@ function router() {
   if (path === "agents") return renderAgentsList(main);
   if (path === "logs") return renderLogExplorer(main);
   if (path === "schedules") return renderScheduler(main);
+  if (path === "users") return isAdmin() ? renderUsers(main) : renderJobsList(main);
   renderJobsList(main);
 }
 
@@ -191,6 +194,169 @@ window.addEventListener("hashchange", router);
 
 function errorBox(err) {
   return h("div", { class: "error-box" }, `Error: ${err.message || err}`);
+}
+
+// --------------------------------------------------------------- User admin
+
+async function renderUsers(main) {
+  main.appendChild(h("h1", {}, "User management"));
+  main.appendChild(h("div", { class: "subtitle" }, "Create accounts, assign roles, update email addresses, reset passwords, and remove users."));
+
+  const createPanel = h("div", { class: "panel" });
+  createPanel.appendChild(h("h2", { style: "margin-top:0" }, "Add user"));
+  const emailInput = h("input", { type: "text", placeholder: "user@example.com", autocomplete: "off" });
+  const passwordInput = h("input", { type: "password", placeholder: "Temporary password", autocomplete: "new-password" });
+  const roleInput = h("select", {}, [
+    h("option", { value: "end_user" }, "End user"),
+    h("option", { value: "admin" }, "Admin"),
+  ]);
+  const createMessage = h("div");
+  createPanel.appendChild(h("div", { class: "user-create-form" }, [
+    h("div", {}, [h("label", {}, "Email"), emailInput]),
+    h("div", {}, [h("label", {}, "Password"), passwordInput]),
+    h("div", {}, [h("label", {}, "Role"), roleInput]),
+    h("button", { class: "btn", onclick: createUser }, "Add user"),
+  ]));
+  createPanel.appendChild(createMessage);
+  main.appendChild(createPanel);
+
+  const listPanel = h("div", { class: "panel" });
+  listPanel.appendChild(h("div", { class: "muted" }, "Loading users..."));
+  main.appendChild(listPanel);
+
+  async function createUser() {
+    createMessage.innerHTML = "";
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    if (!email || !password) {
+      createMessage.appendChild(errorBox(new Error("email and password are required")));
+      return;
+    }
+    try {
+      await api("/auth/users", {
+        method: "POST",
+        body: JSON.stringify({ email, password, role: roleInput.value }),
+      });
+      emailInput.value = "";
+      passwordInput.value = "";
+      createMessage.appendChild(h("div", { class: "ok-box" }, "User created."));
+      await loadUsers();
+    } catch (err) {
+      createMessage.appendChild(errorBox(err));
+    }
+  }
+
+  async function loadUsers() {
+    listPanel.innerHTML = "";
+    listPanel.appendChild(h("div", { class: "muted" }, "Loading users..."));
+    try {
+      const { users } = await api("/auth/users");
+      listPanel.innerHTML = "";
+      if (!users.length) {
+        listPanel.appendChild(h("div", { class: "empty" }, "No users found."));
+        return;
+      }
+      const table = h("table", { class: "users-table" }, [
+        h("thead", {}, h("tr", {}, [
+          h("th", {}, "Email"),
+          h("th", {}, "Role"),
+          h("th", {}, "Created"),
+          h("th", {}, "Password reset"),
+          h("th", {}, "Actions"),
+        ])),
+      ]);
+      const tbody = h("tbody");
+      users.forEach((user) => {
+        const email = h("input", { type: "text", value: user.email, "aria-label": `Email for ${user.email}` });
+        const role = h("select", { "aria-label": `Role for ${user.email}` }, [
+          h("option", { value: "end_user", selected: user.role === "end_user" }, "End user"),
+          h("option", { value: "admin", selected: user.role === "admin" }, "Admin"),
+        ]);
+        const newPassword = h("input", {
+          type: "password",
+          placeholder: "New password",
+          autocomplete: "new-password",
+          "aria-label": `New password for ${user.email}`,
+        });
+        const message = h("div");
+        const row = h("tr", {}, [
+          h("td", {}, email),
+          h("td", {}, role),
+          h("td", {}, fmtTime(user.created_at)),
+          h("td", {}, [
+            newPassword,
+            h("button", { class: "btn secondary", onclick: resetPassword }, "Set password"),
+          ]),
+          h("td", {}, [
+            h("button", { class: "btn", onclick: saveUser }, "Save"),
+            h("button", {
+              class: "btn danger",
+              disabled: user.id === currentUser.id,
+              title: user.id === currentUser.id ? "You cannot delete your own account" : "Delete user",
+              onclick: removeUser,
+            }, "Delete"),
+            message,
+          ]),
+        ]);
+        tbody.appendChild(row);
+
+        async function saveUser() {
+          message.innerHTML = "";
+          try {
+            await api(`/auth/users/${encodeURIComponent(user.id)}`, {
+              method: "PATCH",
+              body: JSON.stringify({ email: email.value.trim(), role: role.value }),
+            });
+            await loadCurrentUser();
+            renderUserBadge();
+            if (!isAdmin()) {
+              window.location.hash = "#/jobs";
+              return;
+            }
+            await loadUsers();
+          } catch (err) {
+            message.appendChild(errorBox(err));
+          }
+        }
+
+        async function resetPassword() {
+          message.innerHTML = "";
+          if (!newPassword.value) {
+            message.appendChild(errorBox(new Error("enter a new password")));
+            return;
+          }
+          try {
+            await api(`/auth/users/${encodeURIComponent(user.id)}/password`, {
+              method: "PUT",
+              body: JSON.stringify({ password: newPassword.value }),
+            });
+            newPassword.value = "";
+            message.appendChild(h("div", { class: "ok-box" }, "Password updated."));
+          } catch (err) {
+            message.appendChild(errorBox(err));
+          }
+        }
+
+        async function removeUser() {
+          if (!confirm(`Delete ${user.email}? This cannot be undone.`)) return;
+          message.innerHTML = "";
+          try {
+            await api(`/auth/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+            await loadUsers();
+          } catch (err) {
+            message.appendChild(errorBox(err));
+          }
+        }
+      });
+      table.appendChild(tbody);
+      listPanel.appendChild(h("div", { class: "user-table-scroll" }, table));
+    } catch (err) {
+      listPanel.innerHTML = "";
+      listPanel.appendChild(errorBox(err));
+    }
+  }
+
+  await loadUsers();
 }
 
 // --------------------------------------------------------------- Jobs

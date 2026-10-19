@@ -47,6 +47,7 @@ body {
 
 .sidebar nav a:hover { background: var(--panel-2); color: var(--text); }
 .sidebar nav a.active { background: var(--accent); color: white; }
+.sidebar nav a[hidden] { display: none; }
 
 .user-badge { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12px; }
 .user-badge .muted { word-break: break-all; margin-bottom: 6px; }
@@ -90,7 +91,7 @@ tr:hover td { background: var(--panel-2); }
 .btn.danger { background: var(--bad); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-input[type=text], textarea, select {
+input[type=text], input[type=password], textarea, select {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
   color: var(--text); padding: 7px 9px; font-size: 13px; font-family: inherit;
 }
@@ -126,8 +127,18 @@ label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 
 .wf-arrow { color: var(--text-dim); padding: 0 10px; font-size: 16px; }
 
 .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.user-create-form { display: grid; grid-template-columns: repeat(3, minmax(140px, 1fr)) auto; gap: 10px; align-items: end; }
+.user-create-form input, .user-create-form select { width: 100%; }
+.user-table-scroll { overflow-x: auto; }
+.users-table { min-width: 900px; }
+.users-table input, .users-table select { width: 100%; min-width: 130px; }
+.users-table td:last-child { min-width: 190px; }
 .muted { color: var(--text-dim); font-size: 12.5px; }
 .error-box { background: rgba(240,87,107,0.1); border: 1px solid var(--bad); color: var(--bad); padding: 10px; border-radius: 6px; font-size: 13px; margin: 10px 0; }
 .warn-box { background: rgba(230,162,60,0.1); border: 1px solid var(--warn); color: var(--warn); padding: 10px; border-radius: 6px; font-size: 13px; margin: 10px 0; }
 .empty { color: var(--text-dim); font-size: 13px; padding: 20px 0; text-align: center; }
 code.inline { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+@media (max-width: 900px) {
+  .user-create-form { grid-template-columns: 1fr 1fr; }
+}
