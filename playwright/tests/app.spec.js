@@ -147,6 +147,7 @@ test.describe('authenticated app', () => {
     await page.getByRole('link', { name: 'Users' }).click();
     await expect(page.getByRole('heading', { name: 'User management' })).toBeVisible();
     await expect(page.getByLabel('Email for other@example.test')).toBeVisible();
+<<<<<<< Updated upstream
     const selfRow = page.getByLabel(`Email for ${user.email}`).locator('xpath=ancestor::tr');
     await expect(selfRow.getByRole('button', { name: 'Delete' })).toBeDisabled();
 
@@ -157,6 +158,15 @@ test.describe('authenticated app', () => {
 
     const refreshedOtherRow = page.getByLabel('Role for renamed@example.test').locator('xpath=ancestor::tr');
     await refreshedOtherRow.getByLabel('New password for renamed@example.test').fill('replacement-password');
+=======
+
+    const otherRow = page.getByLabel('Role for other@example.test').locator('xpath=ancestor::tr');
+    await page.getByLabel('Role for other@example.test').selectOption('admin');
+    await otherRow.getByRole('button', { name: 'Save' }).click();
+
+    const refreshedOtherRow = page.getByLabel('Role for other@example.test').locator('xpath=ancestor::tr');
+    await refreshedOtherRow.getByLabel('New password for other@example.test').fill('replacement-password');
+>>>>>>> Stashed changes
     await refreshedOtherRow.getByRole('button', { name: 'Set password' }).click();
     await expect(refreshedOtherRow.getByText('Password updated.')).toBeVisible();
 

@@ -24,6 +24,9 @@ Auth (core/auth.py + `users` table in core/job_store.py):
     user, but list/read endpoints for Jobs/Runs are scoped to the caller's own
     (created_by / triggered_by_user) rows unless the caller is an admin.
 
+Admin user management also supports creating users, updating email addresses and
+roles, changing passwords, and deleting accounts.
+
 Agents (agents/*.md):
     GET    /agents                       -> registry
     GET    /agents/{name}                -> one agent's full parsed definition
@@ -56,6 +59,9 @@ Runs (one execution of a Job, across every agent):
     LangGraph checkpoint key) by mistake instead of a run_id -- easy to do
     since thread_id is what's printed alongside run_id in the console trace
     logs. See core.job_store.resolve_run_id().
+
+TestDesk (TestDesk/routes.py -- scenarios run in a throwaway sandbox or for real):
+    /testdesk/targets, /testdesk/scenarios, /testdesk/run, /testdesk/results  (see that module)
 
 Schedules (persisted; run against a Job on a cron):                                          [admin for all of these]
     GET    /schedules
@@ -227,11 +233,19 @@ async def create_user_endpoint(req: AdminCreateUserRequest, _: CurrentUser = Dep
     if not email or not req.password:
         raise HTTPException(status_code=422, detail="email and password are required")
     try:
+<<<<<<< Updated upstream
         return await asyncio.to_thread(register_user, email, req.password, req.role)
+=======
+        user = await asyncio.to_thread(register_user, email, req.password, req.role)
+>>>>>>> Stashed changes
     except AuthError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail="email is already registered")
+<<<<<<< Updated upstream
+=======
+    return user
+>>>>>>> Stashed changes
 
 
 @app.patch("/auth/users/{user_id}")
@@ -578,7 +592,13 @@ async def delete_job_endpoint(job_id: str, _: CurrentUser = Depends(require_admi
     return {"deleted": job_id}
 
 
-def _run_job_sync(job_id: str, task: str, triggered_by: str = "manual", triggered_by_user: Optional[str] = None) -> dict:
+def _run_job_sync(
+    job_id: str,
+    task: str,
+    triggered_by: str = "manual",
+    triggered_by_user: Optional[str] = None,
+    run_id: Optional[str] = None,
+) -> dict:
     import json
 
     from core.job_loader import load_job
@@ -586,8 +606,12 @@ def _run_job_sync(job_id: str, task: str, triggered_by: str = "manual", triggere
     from core.notifications import notify_job_result
     from core.supervisor import run_job
 
+    from observability import console_line
+
     job = load_job(job_id)
-    run_id = create_run(job_id, task=task, triggered_by=triggered_by, triggered_by_user=triggered_by_user)
+    if run_id is None:  # callers that already created the Run row (the background path below) pass its id in
+        run_id = create_run(job_id, task=task, triggered_by=triggered_by, triggered_by_user=triggered_by_user)
+    console_line("INFO", f"RUN STARTED  job={job_id}  by={triggered_by}  task: {' '.join(task.split())[:120]}", run_id=run_id)
 
     def on_step(agent_name, thread_id, final_state):
         update_run(run_id, current_agent=agent_name)
@@ -603,6 +627,12 @@ def _run_job_sync(job_id: str, task: str, triggered_by: str = "manual", triggere
         update_run(run_id, status="awaiting_human", current_agent=result["paused_agent"], dag_state=json.dumps(dag_state))
 
     notify_job_result(job, run_id, result)
+    console_line(
+        "ERROR" if result["status"] == "error" else "INFO",
+        f"RUN {result['status'].upper()}" + (f"  at {result.get('failed_agent')}: {result.get('error')}" if result["status"] == "error" else "")
+        + (f"  -- waiting for approval of {result.get('paused_agent')}" if result["status"] == "awaiting_human" else ""),
+        run_id=run_id,
+    )
     return {"run_id": run_id, **result}
 
 
@@ -620,11 +650,29 @@ def _check_run_owner(row: dict, user: "CurrentUser") -> None:
 async def run_job_endpoint(job_id: str, req: RunJobRequest, user: CurrentUser = Depends(get_current_user)):
     from core.job_loader import JobLoadError
 
+    import threading
+
+    from core.job_loader import load_job
+    from core.job_store import create_run, update_run
+
+    # A Job run can take many minutes (every agent calls a model and tools), so
+    # start it in the background and answer immediately with its run_id. The UI
+    # goes straight to the Run page, which polls /runs/{id} for live progress.
     try:
-        result = await asyncio.to_thread(_run_job_sync, job_id, req.task, "manual", user.id)
+        load_job(job_id)  # 404 now if the Job doesn't exist or doesn't parse
     except JobLoadError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return result
+    run_id = create_run(job_id, task=req.task, triggered_by="manual", triggered_by_user=user.id)
+
+    def _background():
+        try:
+            _run_job_sync(job_id, req.task, "manual", user.id, run_id=run_id)
+        except Exception as e:  # never leave the row stuck at "running"
+            logger.error("background_run_failed", run_id=run_id, error=str(e))
+            update_run(run_id, status="error", error=f"{type(e).__name__}: {e}")
+
+    threading.Thread(target=_background, name=f"run-{run_id[:8]}", daemon=True).start()
+    return {"run_id": run_id, "status": "running"}
 
 
 @app.get("/jobs/{job_id}/runs")
@@ -735,13 +783,44 @@ async def get_run_events_endpoint(
     agent: Optional[str] = None,
     task: Optional[str] = None,
     limit: int = 500,
+    since_id: Optional[int] = None,
     user: CurrentUser = Depends(get_current_user),
 ):
     row, run_id = _get_run_or_resolve(run_id)
     _check_run_owner(row, user)
 
-    events = get_events(run_id=run_id, level=level, agent_name=agent, task_id=task, limit=limit)
+    events = get_events(run_id=run_id, level=level, agent_name=agent, task_id=task, limit=limit, since_id=since_id)
     return {"run_id": run_id, "events": events}
+
+
+@app.get("/logs/live")
+async def live_logs_endpoint(
+    since_id: Optional[int] = None,
+    level: Optional[str] = None,
+    run_id: Optional[str] = None,
+    agent: Optional[str] = None,
+    limit: int = 200,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Live-tail of run events for the Log Explorer's console. The first call
+    (no since_id) returns the latest `limit` events oldest-first; each later call
+    passes the previous response's last_id and gets only what is new. Admins see
+    every run; other users see only events of runs they started."""
+    from core.job_store import list_runs
+
+    limit = max(1, min(limit, 1000))
+    if run_id:
+        row, run_id = _get_run_or_resolve(run_id)
+        _check_run_owner(row, user)
+    if since_id is None:
+        events = list(reversed(get_events(run_id=run_id, level=level, agent_name=agent, limit=limit)))
+    else:
+        events = get_events(run_id=run_id, level=level, agent_name=agent, limit=limit, since_id=since_id)
+    last_id = max((e["id"] for e in events), default=since_id or 0)  # advance past events this user can't see, too
+    if user.role != "admin":
+        owned = {r["id"] for r in list_runs(limit=500) if r.get("triggered_by_user") == user.id}
+        events = [e for e in events if e.get("run_id") in owned]
+    return {"events": events, "last_id": last_id}
 
 
 # -------------------------------------------------------------- schedules
@@ -833,6 +912,14 @@ async def run_schedule_now_endpoint(schedule_id: str, _: CurrentUser = Depends(r
 
     result = await asyncio.to_thread(_run)
     return result
+
+
+# ---------------------------------------------------------------- TestDesk
+# Self-test guide: run a user-written scenario in a throwaway sandbox (test)
+# or through the normal run path (prod). See TestDesk/README.md.
+from TestDesk.routes import build_router as _build_testdesk_router  # noqa: E402
+
+app.include_router(_build_testdesk_router(get_current_user, _run_job_sync))
 
 
 @app.get("/health")

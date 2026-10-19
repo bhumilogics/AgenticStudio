@@ -96,6 +96,51 @@ def _connect():
         conn.close()
 
 
+# ----------------------------------------------------- live server console
+#
+# Everything an agent does is persisted to run_events (the Log Explorer reads
+# it) and also printed here, as one readable line per event, so the terminal
+# running uvicorn shows a live play-by-play. Turn it off with
+# AGENTICSTUDIO_LIVE_CONSOLE=0.
+
+def _console_enabled() -> bool:
+    return os.environ.get("AGENTICSTUDIO_LIVE_CONSOLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _clip(value, n: int) -> str:
+    text = " ".join(str(value if value is not None else "").split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def summarize_payload(payload: dict | None) -> str:
+    """One short human-readable line for an event's payload (mirrors summarizeEvent() in frontend/app.js)."""
+    p = payload or {}
+    msgs = p.get("messages")
+    if isinstance(msgs, list) and msgs:
+        m = msgs[-1]
+        return f"{m.get('type', 'Message')}: {_clip(m.get('content'), 220)}"
+    if p.get("error"):
+        return "error: " + _clip(p["error"], 220)
+    if p.get("input"):
+        return "input: " + _clip(p["input"], 160)
+    return _clip(json.dumps(p, default=str), 200) if p else ""
+
+
+def console_line(level: str, text: str, run_id: str | None = None, agent: str | None = None) -> None:
+    """Print one timestamped line to the server terminal and flush it at once."""
+    if not _console_enabled():
+        return
+    stamp = time.strftime("%H:%M:%S")
+    where = " ".join(x for x in ((f"run {run_id[:8]}" if run_id else ""), (agent or "")) if x)
+    line = f"[{stamp}] {level:<5} {where + '  ' if where else ''}{text}"
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:  # a legacy Windows console codepage
+        print(line.encode("ascii", "replace").decode("ascii"), flush=True)
+    except Exception:  # noqa: BLE001 -- console output must never break a run
+        pass
+
+
 def record_event(
     thread_id: str,
     node: str,
@@ -129,6 +174,9 @@ def record_event(
                 output_tokens,
             ),
         )
+    console_line(
+        level, f"{node} > {event_type}  {summarize_payload(payload)}".rstrip(), run_id=run_id, agent=agent_name,
+    )
     log_fn = {"DEBUG": logger.debug, "INFO": logger.info, "WARN": logger.warning, "ERROR": logger.error}.get(level, logger.info)
     log_fn("graph_event", thread_id=thread_id, node=node, event_type=event_type, job_id=job_id, run_id=run_id, agent_name=agent_name)
 
@@ -141,6 +189,7 @@ def get_events(
     task_id: str | None = None,
     level: str | None = None,
     limit: int = 500,
+    since_id: int | None = None,
 ) -> list[dict]:
     """The Log Explorer's data source: every filter is optional and ANDed
     together. `run_id` is what correlates one multi-agent Job run's events
@@ -157,12 +206,15 @@ def get_events(
         if val is not None:
             clauses.append(f"{col} = ?")
             params.append(val)
+    if since_id is not None:  # live tail: only events newer than the last one the caller saw, oldest first
+        clauses.append("id > ?")
+        params.append(since_id)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            f"SELECT * FROM run_events {where} ORDER BY id DESC LIMIT ?", (*params, limit)
+            f"SELECT * FROM run_events {where} ORDER BY id {'ASC' if since_id is not None else 'DESC'} LIMIT ?", (*params, limit)
         ).fetchall()
         return [dict(r) for r in rows]
 

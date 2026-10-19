@@ -11,4 +11,10 @@ httpsyoutu.beXSwkW7atUOEsi=KEoS49UN.txt
 node_modules
 observability/__pycache__
 workdir
+<<<<<<< Updated upstream
 start_apps.bat
+=======
+
+# TestDesk run data (scenarios, reports)
+/TestDesk/data
+>>>>>>> Stashed changes

@@ -6,9 +6,9 @@ reports_to: qa_lead
 hands_off_to: null
 model: claude-sonnet-5
 llm_backend: null
-tools: [file_ops, human_loop]
+tools: [file_ops, human_loop, code_execution]
 autonomy: checkpoint
-risky_tools: []
+risky_tools: [shell_exec, file_delete]
 max_iterations: 15
 max_tool_retries: 2
 version: 1

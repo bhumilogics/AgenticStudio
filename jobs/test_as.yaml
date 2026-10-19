@@ -1,0 +1,82 @@
+id: test_as
+name: "Test-AS"
+description: "Run the QA team end to end on a testing scope: the QA Manager scopes the strategy, the QA Lead splits it into test cases, then the Automation Engineer and the Test Executor each turn their cases into Playwright scripts, run them and report results. The QA Lead verifies the evidence and requests final approval, and the QA Manager gives the sign-off. Objective: write as many useful test cases as possible for the AgenticStudio web app (http://localhost:8080)."
+trigger_type: manual
+
+agents:
+  - qa_manager
+  - qa_lead
+  - qa_automation_engineer
+  - qa_test_executor
+
+tasks:
+  - id: strategy
+    agent: qa_manager
+    name: "Define the test strategy for AgenticStudio"
+    instructions: |
+      The system under test is the AgenticStudio web app: UI at http://localhost:8080, API at http://localhost:8000.
+      Its pages are: sign-in/register, Jobs (list, detail with workflow diagram, admin workflow editor, run), Run detail
+      (live workflow, approve/deny), Agents (list, detail, natural-language draft), Scheduler (admin only), Log Explorer,
+      and TestDesk. There are two roles: admin (the first registered user) and end_user.
+      Read workdir/testas/GUIDE.md first (file tool, path "testas/GUIDE.md"): it lists the routes, the safety rules and the
+      Playwright conventions every later step must follow.
+      Produce a short strategy: in-scope areas, out-of-scope areas, priority order (risk first: auth and role gating, then
+      Jobs, Runs, Agents, Scheduler, Logs, TestDesk), and what "done" means. The objective is breadth: as many distinct,
+      valuable test cases as can be written and executed. Hand it to the QA Lead.
+    depends_on: []
+  - id: plan
+    agent: qa_lead
+    name: "Split the strategy into test cases"
+    instructions: |
+      Turn the strategy into a numbered list of test cases (TC-001, TC-002, ...), as many as the scope supports, covering
+      positive, negative, validation, role-based-access and empty-state paths. For each case give: id, title, area, steps,
+      expected result (explicit acceptance criteria).
+      Then split the cases into two NON-OVERLAPPING groups, every case in exactly one group:
+        GROUP A for the QA Automation Engineer: API-level and functional flows (auth, role gating, jobs, runs, schedules, validation errors).
+        GROUP B for the QA Test Executor: UI-level behaviour (navigation, rendering, forms, workflow diagram, admin-only visibility, empty/error states, layout sanity).
+      State the group of each case explicitly. If a case needs unclear expected behaviour, list it under "Open questions"
+      for the QA Manager instead of guessing.
+    depends_on: [strategy]
+  - id: automate
+    agent: qa_automation_engineer
+    name: "Write, run and report Group A as Playwright scripts"
+    instructions: |
+      You own GROUP A from the QA Lead's plan. Read testas/GUIDE.md and follow it exactly.
+      For every Group A case write a Playwright script (JavaScript, @playwright/test) saved under testas/auto/, one file per
+      case or small cluster, named tcNNN_short_name.spec.js. Include the case id in each test title.
+      Then run them from the project root with the command in the guide, restricted to your folder (auto/), and capture the
+      real output. Rerun a failing test once to separate a real defect from flakiness.
+      Report per case: id, PASS/FAIL, the evidence (output or log excerpt) and, for failures, what you think is wrong. List the
+      script file for every case. Never skip a case silently: mark anything you could not write or run as BLOCKED with the reason.
+    depends_on: [plan]
+  - id: execute
+    agent: qa_test_executor
+    name: "Write, run and report Group B as Playwright scripts"
+    instructions: |
+      You own GROUP B from the QA Lead's plan. Read testas/GUIDE.md and follow it exactly.
+      For every Group B case write a Playwright script (JavaScript, @playwright/test) saved under testas/exec/, named
+      tcNNN_short_name.spec.js, with the case id in each test title. Because the UI needs a signed-in user and you must not
+      create real accounts or runs, stub the API with page.route exactly as the guide describes.
+      Run them from the project root with the command in the guide, restricted to your folder (exec/), and capture the real
+      output. Report per case: id, PASS/FAIL, what you observed (not just a verdict), the script file, and for failures the
+      likely cause. Mark anything you could not write or run as BLOCKED with the reason; never skip silently.
+    depends_on: [plan]
+  - id: verify
+    agent: qa_lead
+    name: "Verify results and request manager approval"
+    instructions: |
+      Review both result reports against your plan and acceptance criteria. Check: every case has exactly one result; every
+      PASS has real evidence; every FAIL or BLOCKED is explained; no case was dropped or duplicated across the two groups.
+      Where evidence is weak, say so and mark the case UNVERIFIED rather than accepting it.
+      Produce a verification report: totals (pass / fail / blocked / unverified), the defects found with severity, coverage
+      gaps, and a clear APPROVAL REQUEST to the QA Manager with your recommendation (approve, approve with conditions, or reject).
+    depends_on: [automate, execute]
+  - id: approve
+    agent: qa_manager
+    name: "Final manager approval"
+    instructions: |
+      Review the QA Lead's verification report and approval request against your original strategy. Decide: APPROVED,
+      APPROVED WITH CONDITIONS, or CHANGES REQUESTED, with your reasons, and list what is missing if anything. Finish with the
+      final summary for the person who started this Job: decision, results totals, key defects, and where the Playwright scripts
+      and results live (testas/auto, testas/exec, testas/results).
+    depends_on: [verify]

@@ -167,11 +167,13 @@ const routes = {
   "/agents": renderAgentsList,
   "/logs": renderLogExplorer,
   "/schedules": renderScheduler,
+  "/testdesk": renderTestDesk,
 };
 
 function router() {
   if (!getToken()) { renderAuthGate(); return; }
-  const hash = window.location.hash.replace(/^#/, "") || "/jobs";
+  // strip any ?query (e.g. "#/logs?run=<id>") before matching the route -- otherwise "logs?run=..." matched nothing and fell through to Jobs
+  const hash = (window.location.hash.replace(/^#/, "") || "/jobs").split("?")[0];
   const [path, ...rest] = hash.split("/").filter(Boolean);
   const main = document.getElementById("main");
   main.innerHTML = "";
@@ -186,6 +188,10 @@ function router() {
   if (path === "agents") return renderAgentsList(main);
   if (path === "logs") return renderLogExplorer(main);
   if (path === "schedules") return renderScheduler(main);
+<<<<<<< Updated upstream
+=======
+  if (path === "testdesk") return renderTestDesk(main);
+>>>>>>> Stashed changes
   if (path === "users") return isAdmin() ? renderUsers(main) : renderJobsList(main);
   renderJobsList(main);
 }
@@ -279,10 +285,22 @@ async function renderUsers(main) {
           "aria-label": `New password for ${user.email}`,
         });
         const message = h("div");
+<<<<<<< Updated upstream
+=======
+        const saveButton = h("button", { class: "btn", onclick: saveUser }, "Save");
+        const passwordButton = h("button", { class: "btn secondary", onclick: resetPassword }, "Set password");
+        const deleteButton = h("button", {
+          class: "btn danger",
+          disabled: user.id === currentUser.id,
+          title: user.id === currentUser.id ? "You cannot delete your own account" : "Delete user",
+          onclick: removeUser,
+        }, "Delete");
+>>>>>>> Stashed changes
         const row = h("tr", {}, [
           h("td", {}, email),
           h("td", {}, role),
           h("td", {}, fmtTime(user.created_at)),
+<<<<<<< Updated upstream
           h("td", {}, [
             newPassword,
             h("button", { class: "btn secondary", onclick: resetPassword }, "Set password"),
@@ -297,6 +315,10 @@ async function renderUsers(main) {
             }, "Delete"),
             message,
           ]),
+=======
+          h("td", {}, [newPassword, passwordButton]),
+          h("td", {}, [saveButton, deleteButton, message]),
+>>>>>>> Stashed changes
         ]);
         tbody.appendChild(row);
 
@@ -313,6 +335,10 @@ async function renderUsers(main) {
               window.location.hash = "#/jobs";
               return;
             }
+<<<<<<< Updated upstream
+=======
+            message.appendChild(h("div", { class: "ok-box" }, "User updated."));
+>>>>>>> Stashed changes
             await loadUsers();
           } catch (err) {
             message.appendChild(errorBox(err));
@@ -694,9 +720,25 @@ async function renderRunDetail(main, runId) {
   const panel = h("div", { class: "panel" }, h("div", { class: "muted" }, "Loading..."));
   main.appendChild(panel);
 
+  let pollTimer = null;
+  function fmtElapsed(sec) {
+    sec = Math.max(0, Math.round(sec));
+    return sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`;
+  }
+
   async function load() {
+    clearTimeout(pollTimer);
     const run = await api(`/runs/${runId}`);
     const graph = await api(`/jobs/${run.job_id}/graph`);
+
+    // Live activity: the newest trace events say which agent is working RIGHT NOW
+    // (run.current_agent only updates when an agent finishes a hop).
+    let recent = [];
+    if (run.status === "running") {
+      try { recent = (await api(`/runs/${runId}/events?limit=12`)).events || []; } catch (e) { /* non-fatal */ }
+    }
+    const workingAgent = run.status === "running" ? ((recent[0] && recent[0].agent_name) || run.current_agent) : run.current_agent;
+
     panel.innerHTML = "";
     panel.appendChild(h("div", {}, [
       h("span", { class: "muted" }, "Job: "), h("a", { href: `#/jobs/${run.job_id}` }, run.job_id),
@@ -704,7 +746,19 @@ async function renderRunDetail(main, runId) {
       run.stale ? h("span", { class: "badge stale", style: "margin-left:6px" }, "stuck?") : null,
     ]));
     panel.appendChild(h("div", { class: "muted", style: "margin-top:6px" }, `Task: ${run.task}`));
-    panel.appendChild(renderWorkflow(graph, run.current_agent, run.status));
+    panel.appendChild(renderWorkflow(graph, workingAgent, run.status));
+
+    if (run.status === "running") {
+      const elapsed = fmtElapsed(Date.now() / 1000 - run.started_at);
+      panel.appendChild(h("div", { class: "live-box" }, [
+        h("div", {}, [h("span", { class: "live-dot" }), " ",
+          h("strong", {}, workingAgent ? `${workingAgent} is working…` : "Starting…"),
+          h("span", { class: "muted" }, `  ·  running for ${elapsed}  ·  this page refreshes automatically`)]),
+        h("div", { class: "muted", style: "margin-top:4px" }, "Agents call the model and tools, so each step can take a minute or more. If a step needs your approval, this page will show Approve / Deny."),
+        recent.length ? h("ul", { class: "live-events" }, recent.slice(0, 8).map((e) =>
+          h("li", {}, [h("span", { class: "muted" }, fmtTime(e.ts) + "  "), h("strong", {}, e.agent_name || "supervisor"), "  " + (e.event_type || e.node || "")]))) : null,
+      ]));
+    }
 
     if (run.status === "error") {
       panel.appendChild(h("div", { class: "error-box" }, `Failed at ${run.current_agent}: ${run.error}`));
@@ -731,7 +785,15 @@ async function renderRunDetail(main, runId) {
       ]));
     }
 
-    panel.appendChild(h("div", { style: "margin-top:16px" }, h("a", { href: `#/logs?run=${runId}` }, "View this run's logs →")));
+    panel.appendChild(h("div", { style: "margin-top:16px" }, h("a", { href: `#/logs?run=${runId}` }, "Open the live console & logs for this run →")));
+
+    // keep polling while the run is in flight; stop when it finishes or the user leaves this page
+    if (run.status === "running") {
+      pollTimer = setTimeout(() => {
+        if (!document.body.contains(panel)) return;
+        load().catch(() => {});
+      }, 3000);
+    }
   }
 
   async function resumeRun(id, decision) {
@@ -828,11 +890,96 @@ async function renderAgentsList(main) {
 
 // --------------------------------------------------------- Log Explorer
 
+// One short human-readable line for a trace event (mirrors summarize_payload() in observability/tracer.py,
+// which prints the same thing to the server terminal).
+function summarizeEvent(e) {
+  let p = {};
+  try { p = JSON.parse(e.payload || "{}"); } catch (_) { /* leave empty */ }
+  const clip = (v, n) => { const t = String(v == null ? "" : v).replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+  if (Array.isArray(p.messages) && p.messages.length) { const m = p.messages[p.messages.length - 1]; return `${m.type || "Message"}: ${clip(m.content, 220)}`; }
+  if (p.error) return "error: " + clip(p.error, 220);
+  if (p.input) return "input: " + clip(p.input, 160);
+  return Object.keys(p).length ? clip(JSON.stringify(p), 200) : "";
+}
+
+// Live console: tails /logs/live every ~1.5s, like `tail -f` on the run's trace. Leave Run ID empty to watch every run.
+function renderLiveConsole(main, initialRunId) {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+  const MAX_LINES = 1500;
+  let lastId = null, paused = false, timer = null, count = 0, stopped = false;
+
+  const runIn = h("input", { type: "text", placeholder: "all runs (or paste a run_id)", value: initialRunId || "" });
+  const levelSel = h("select", {}, ["", "DEBUG", "INFO", "WARN", "ERROR"].map((l) => h("option", { value: l }, l || "All levels")));
+  const autoScroll = h("input", { type: "checkbox" }); autoScroll.checked = true;
+  const status = h("span", { class: "muted" }, "connecting…");
+  const screen = h("div", { class: "console" });
+  const pauseBtn = h("button", { class: "btn secondary", onclick: () => { paused = !paused; pauseBtn.textContent = paused ? "Resume" : "Pause"; paintStatus(); } }, "Pause");
+  const clearBtn = h("button", { class: "btn secondary", onclick: () => { screen.innerHTML = ""; count = 0; paintStatus(); } }, "Clear");
+
+  function paintStatus(err) {
+    status.innerHTML = "";
+    if (err) { status.appendChild(h("span", { style: "color:var(--bad)" }, "error: " + err)); return; }
+    status.appendChild(h("span", { class: paused ? "" : "live-dot" }));
+    status.appendChild(document.createTextNode(` ${paused ? "paused" : "live"} · ${count} lines`));
+  }
+  function reset() { lastId = null; screen.innerHTML = ""; count = 0; }
+  runIn.addEventListener("change", reset);
+  levelSel.addEventListener("change", reset);
+
+  function addLine(e) {
+    const t = new Date(e.ts * 1000).toLocaleTimeString();
+    const who = [e.run_id ? "run " + e.run_id.slice(0, 8) : "", e.agent_name || ""].filter(Boolean).join(" ");
+    screen.appendChild(h("div", { class: `console-line lvl-${e.level || "INFO"}` }, [
+      h("span", { class: "c-time" }, t + " "),
+      h("span", { class: "c-lvl" }, (e.level || "INFO").padEnd(5, " ") + " "),
+      h("span", { class: "c-who" }, who ? who + "  " : ""),
+      h("span", { class: "c-msg" }, `${e.node} > ${e.event_type}  ${summarizeEvent(e)}`),
+    ]));
+    count += 1;
+    while (screen.childNodes.length > MAX_LINES) screen.removeChild(screen.firstChild);
+  }
+
+  async function tick() {
+    if (stopped || !document.body.contains(screen)) return;
+    if (!paused) {
+      try {
+        const qs = new URLSearchParams();
+        const rid = (runIn.value.trim().match(UUID) || [""])[0];
+        if (rid) qs.set("run_id", rid);
+        if (levelSel.value) qs.set("level", levelSel.value);
+        if (lastId != null) qs.set("since_id", String(lastId)); else qs.set("limit", "200");
+        const r = await api(`/logs/live?${qs.toString()}`);
+        lastId = r.last_id;
+        r.events.forEach(addLine);
+        if (r.events.length && autoScroll.checked) screen.scrollTop = screen.scrollHeight;
+        if (lastId === 0 && !count && !screen.firstChild) screen.appendChild(h("div", { class: "console-line muted" }, "Waiting for activity… start a Job and its events will stream in here."));
+        paintStatus();
+      } catch (err) { paintStatus(err.message || String(err)); }
+    }
+    timer = setTimeout(tick, 1500);
+  }
+
+  main.appendChild(h("div", { class: "panel" }, [
+    h("h2", { style: "margin-top:0" }, "Live console"),
+    h("div", { class: "row" }, [
+      h("div", {}, [h("label", {}, "Run ID"), runIn]),
+      h("div", {}, [h("label", {}, "Level"), levelSel]),
+      h("div", {}, [h("label", {}, " "), h("label", { class: "check" }, [autoScroll, " Auto-scroll"])]),
+      h("div", {}, [h("label", {}, " "), h("span", {}, [pauseBtn, clearBtn])]),
+      h("div", {}, [h("label", {}, " "), status]),
+    ]),
+    screen,
+  ]));
+  tick();
+}
+
 async function renderLogExplorer(main) {
   main.appendChild(h("h1", {}, "Log Explorer"));
-  main.appendChild(h("div", { class: "subtitle" }, "Every node transition across every agent, correlated by run."));
+  main.appendChild(h("div", { class: "subtitle" }, "Watch every agent live as it works, or load the full trace of one run below."));
 
   const params = new URLSearchParams(window.location.hash.split("?")[1] || "");
+  renderLiveConsole(main, params.get("run") || "");
+  main.appendChild(h("h2", {}, "Run trace"));
   const panel = h("div", { class: "panel" });
 
   const runIdInput = h("input", { type: "text", placeholder: "run_id", value: params.get("run") || "" });

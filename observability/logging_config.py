@@ -45,6 +45,17 @@ def configure_logging() -> None:
     for handler in logging.getLogger().handlers:
         handler.setFormatter(formatter)
 
+    # The terminal gets the readable live console (observability/tracer.py console_line); the JSON
+    # "graph_event" line for the same event would just duplicate it there, so keep it to the file.
+    if os.environ.get("AGENTICSTUDIO_LIVE_CONSOLE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        class _SkipGraphEvents(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return not (isinstance(record.msg, dict) and record.msg.get("event") == "graph_event")
+
+        for handler in logging.getLogger().handlers:
+            if type(handler) is logging.StreamHandler:  # the stdout one, not the FileHandler (a subclass)
+                handler.addFilter(_SkipGraphEvents())
+
 
 def get_logger(name: str = "agenticstudio"):
     return structlog.get_logger(name)

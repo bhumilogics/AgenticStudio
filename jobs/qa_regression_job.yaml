@@ -14,7 +14,7 @@ tasks:
     agent: qa_manager
     name: "Define test strategy"
     instructions: "Turn the incoming task description into a scoped test strategy: what changed, priority areas, and what \"done\" means for this pass."
-    depends_on: [plan]
+    depends_on: []
   - id: plan
     agent: qa_lead
     name: "Build the test plan"
