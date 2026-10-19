@@ -1,4 +1,6 @@
 /cli/
+/data/*
+.venv/
 .env
 *.log
 __pycache__
@@ -9,3 +11,4 @@ httpsyoutu.beXSwkW7atUOEsi=KEoS49UN.txt
 node_modules
 observability/__pycache__
 workdir
+start_apps.bat
